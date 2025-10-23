@@ -222,8 +222,8 @@ api_key = st.secrets.get("GOOGLE_MAPS_API_KEY")
 if not api_key:
     st.sidebar.error("API ключ Google Maps не налаштовано в секретах!")
     st.stop() # Зупиняємо виконання, якщо ключа немає
-# else: # Якщо ключ є, можна просто відобразити маску (опціонально)
-#     st.sidebar.text_input("🔑 Google Maps API ключ", type="password", value="********", disabled=True)
+else: 
+st.sidebar.text_input("🔑 Google Maps API ключ", type="password", value="********", disabled=True)
 st.sidebar.markdown("---")
 st.sidebar.subheader("Параметри оптимізації")
 service_time_minutes = st.sidebar.number_input("Час на обслуговування (хв)", min_value=0, value=20)
@@ -465,3 +465,4 @@ with tab4:
             st.subheader("Візуалізація витрат палива:")
 
             st.bar_chart(report_df.set_index('vehicle_name')[['total_fuel']])
+
