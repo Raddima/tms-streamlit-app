@@ -3,7 +3,6 @@ import streamlit as st
 from datetime import datetime, time as dt_time
 
 # --- Утиліта для міграцій ---
-# (Залишається без змін)
 def _add_column_if_not_exists(cursor, table_name, column_name, column_type):
     """Додає колонку до таблиці, якщо вона ще не існує."""
     cursor.execute(f"PRAGMA table_info({table_name})")
@@ -15,13 +14,12 @@ def _add_column_if_not_exists(cursor, table_name, column_name, column_type):
             if "duplicate column name" not in str(e):
                  st.warning(f"Не вдалося додати колонку {column_name} до {table_name}: {e}")
 
-# ==== ОНОВЛЕНА ФУНКЦІЯ З'ЄДНАННЯ ====
-# @st.cache_resource # Тимчасово прибираємо кешування, щоб гарантувати виконання PRAGMA
+@st.cache_resource
 def get_db_connection():
     """Створює та повертає з'єднання з базою даних SQLite."""
     conn = sqlite3.connect('logistics_data.db', check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    # Гарантовано вмикаємо підтримку зовнішніх ключів для КОЖНОГО з'єднання
+    # Важливо: Вмикаємо підтримку зовнішніх ключів один раз при створенні з'єднання
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -38,14 +36,14 @@ def run_migrations(conn):
 def init_db():
     """Ініціалізує базу даних, створює всі необхідні таблиці та запускає міграції."""
     conn = get_db_connection()
-    # Створення таблиць з ON DELETE CASCADE
+    # Створення таблиць з ON DELETE CASCADE (про всяк випадок)
     conn.execute('CREATE TABLE IF NOT EXISTS locations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, address TEXT NOT NULL UNIQUE)')
     conn.execute('CREATE TABLE IF NOT EXISTS vehicles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, capacity INTEGER NOT NULL, fuel_consumption REAL NOT NULL DEFAULT 10.0)')
     conn.execute('CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, run_date DATE NOT NULL, status TEXT NOT NULL DEFAULT \'Заплановано\', total_distance REAL, total_fuel_spent REAL)')
     conn.execute('CREATE TABLE IF NOT EXISTS run_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, name TEXT NOT NULL, address TEXT NOT NULL, weight INTEGER NOT NULL, time_from TEXT NOT NULL, time_to TEXT NOT NULL, request_type TEXT NOT NULL DEFAULT \'Доставка\', FOREIGN KEY (run_id) REFERENCES runs (id) ON DELETE CASCADE)')
     conn.execute('CREATE TABLE IF NOT EXISTS vehicle_routes (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, vehicle_name TEXT NOT NULL, vehicle_capacity INTEGER NOT NULL, route_text TEXT NOT NULL, distance REAL, load REAL, fuel_spent REAL, FOREIGN KEY (run_id) REFERENCES runs (id) ON DELETE CASCADE)')
     conn.commit()
-    run_migrations(conn) # Запускаємо міграції після створення
+    run_migrations(conn)
 
 # --- Функції для локацій ---
 def get_saved_locations(): return get_db_connection().execute('SELECT name, address FROM locations ORDER BY name').fetchall()
@@ -107,19 +105,27 @@ def get_run_details(run_id):
 def update_run_status(run_id, new_status):
     get_db_connection().execute('UPDATE runs SET status = ? WHERE id = ?', (new_status, run_id)).connection.commit()
 
-# ==== ПОВЕРТАЄМОСЬ ДО ПРОСТОГО ВИДАЛЕННЯ, ПОКЛАДАЮЧИСЬ НА CASCADE ====
+# ==== ФІНАЛЬНА ВЕРСІЯ ФУНКЦІЇ ВИДАЛЕННЯ ====
 def delete_run(run_id):
-    """Повністю видаляє рейс, покладаючись на ON DELETE CASCADE."""
+    """Повністю видаляє рейс, явно видаляючи пов'язані записи."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
     try:
-        conn = get_db_connection()
-        conn.execute('DELETE FROM runs WHERE id = ?', (run_id,))
+        # Починаємо транзакцію
+        cursor.execute('BEGIN TRANSACTION')
+        # 1. Видаляємо пов'язані маршрути
+        cursor.execute('DELETE FROM vehicle_routes WHERE run_id = ?', (run_id,))
+        # 2. Видаляємо пов'язані заявки
+        cursor.execute('DELETE FROM run_requests WHERE run_id = ?', (run_id,))
+        # 3. Видаляємо сам рейс
+        cursor.execute('DELETE FROM runs WHERE id = ?', (run_id,))
+        # Завершуємо транзакцію
         conn.commit()
-    except sqlite3.IntegrityError as e:
-        # Додаємо більш детальне повідомлення про помилку
-        st.error(f"Помилка цілісності бази даних при видаленні рейсу №{run_id}: {e}. Можливо, PRAGMA foreign_keys не увімкнено належним чином.")
     except Exception as e:
-        st.error(f"Загальна помилка при видаленні рейсу №{run_id}: {e}")
-
+        conn.rollback() # Відкочуємо зміни у разі помилки
+        st.error(f"Помилка при видаленні рейсу №{run_id}: {e}")
+        # Додатково логуємо помилку для Streamlit Cloud
+        print(f"Error deleting run {run_id}: {e}") # Log to console/Streamlit logs
 
 def get_assigned_vehicles_for_date(run_date):
     run_date_str = run_date.isoformat()
