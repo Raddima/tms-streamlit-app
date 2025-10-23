@@ -1,6 +1,6 @@
 import sqlite3
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, time as dt_time # <-- Додано імпорт time як dt_time
 
 # --- Утиліта для міграцій ---
 def _add_column_if_not_exists(cursor, table_name, column_name, column_type):
@@ -10,19 +10,18 @@ def _add_column_if_not_exists(cursor, table_name, column_name, column_type):
     if column_name not in columns:
         try:
             cursor.execute(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}')
-            st.toast(f"Додано колонку '{column_name}' до таблиці '{table_name}'.", icon="🔩")
+            # Повідомлення про міграцію (краще показувати один раз)
+            # st.toast(f"Додано колонку '{column_name}' до таблиці '{table_name}'.", icon="🔩")
         except sqlite3.OperationalError as e:
-            # Ігноруємо помилку, якщо колонка вже існує (на випадок паралельних запусків)
-            if "duplicate column name" not in str(e):
-                st.warning(f"Не вдалося додати колонку {column_name} до {table_name}: {e}")
+            if "duplicate column name" not in str(e): # Ігноруємо, якщо колонка вже є
+                 st.warning(f"Не вдалося додати колонку {column_name} до {table_name}: {e}")
 
 @st.cache_resource
 def get_db_connection():
     """Створює та повертає з'єднання з базою даних SQLite."""
     conn = sqlite3.connect('logistics_data.db', check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    # Вмикаємо підтримку зовнішніх ключів (важливо для видалення)
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA foreign_keys = ON") # Вмикаємо підтримку зовнішніх ключів
     return conn
 
 def run_migrations(conn):
@@ -46,7 +45,6 @@ def init_db():
     conn.execute('CREATE TABLE IF NOT EXISTS locations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, address TEXT NOT NULL UNIQUE)')
     conn.execute('CREATE TABLE IF NOT EXISTS vehicles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, capacity INTEGER NOT NULL, fuel_consumption REAL NOT NULL DEFAULT 10.0)')
     conn.execute('CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, run_date DATE NOT NULL, status TEXT NOT NULL DEFAULT \'Заплановано\', total_distance REAL, total_fuel_spent REAL)')
-    # Додано ON DELETE CASCADE для автоматичного видалення пов'язаних записів
     conn.execute('CREATE TABLE IF NOT EXISTS run_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, name TEXT NOT NULL, address TEXT NOT NULL, weight INTEGER NOT NULL, time_from TEXT NOT NULL, time_to TEXT NOT NULL, request_type TEXT NOT NULL DEFAULT \'Доставка\', FOREIGN KEY (run_id) REFERENCES runs (id) ON DELETE CASCADE)')
     conn.execute('CREATE TABLE IF NOT EXISTS vehicle_routes (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, vehicle_name TEXT NOT NULL, vehicle_capacity INTEGER NOT NULL, route_text TEXT NOT NULL, distance REAL, load REAL, fuel_spent REAL, FOREIGN KEY (run_id) REFERENCES runs (id) ON DELETE CASCADE)')
     conn.commit()
@@ -57,12 +55,12 @@ def init_db():
 def get_saved_locations(): return get_db_connection().execute('SELECT name, address FROM locations ORDER BY name').fetchall()
 def add_location_to_db(name, address):
     try: get_db_connection().execute('INSERT INTO locations (name, address) VALUES (?, ?)', (name, address)).connection.commit()
-    except sqlite3.IntegrityError: pass # Ігноруємо, якщо адреса вже існує
+    except sqlite3.IntegrityError: pass
 
 # --- Функції для автомобілів ---
 def get_saved_vehicles():
     rows = get_db_connection().execute('SELECT id, name, capacity, fuel_consumption FROM vehicles ORDER BY name').fetchall()
-    return [dict(row) for row in rows] # Конвертуємо в стандартні словники
+    return [dict(row) for row in rows]
 def add_vehicle_to_db(name, capacity, fuel_consumption):
     try: get_db_connection().execute('INSERT INTO vehicles (name, capacity, fuel_consumption) VALUES (?, ?, ?)', (name, capacity, fuel_consumption)).connection.commit()
     except sqlite3.IntegrityError: st.warning(f"Автомобіль '{name}' вже існує.")
@@ -73,7 +71,6 @@ def create_run(run_date):
     """Створює новий запис про рейс у базі даних."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    # ==== ВИПРАВЛЕННЯ: Конвертуємо дату в рядок ISO формату ====
     run_date_str = run_date.isoformat()
     cursor.execute('INSERT INTO runs (run_date) VALUES (?)', (run_date_str,))
     conn.commit()
@@ -83,7 +80,7 @@ def save_requests_for_run(run_id, requests):
     """Зберігає список заявок для конкретного рейсу."""
     conn = get_db_connection()
     for req in requests:
-        # Переконуємось, що час у правильному форматі
+        # ==== ВИПРАВЛЕННЯ: Використовуємо імпортований dt_time ====
         time_from_str = req['time_from'].strftime('%H:%M') if isinstance(req['time_from'], dt_time) else str(req['time_from'])
         time_to_str = req['time_to'].strftime('%H:%M') if isinstance(req['time_to'], dt_time) else str(req['time_to'])
         conn.execute('INSERT INTO run_requests (run_id, name, address, weight, time_from, time_to, request_type) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -94,7 +91,6 @@ def save_routes_for_run(run_id, routes_data):
     """Зберігає розраховані маршрути для конкретного рейсу."""
     conn, total_fuel = get_db_connection(), 0
     for route in routes_data:
-        # Переконуємось, що fuel_spent є числом
         fuel_spent = route.get('fuel_spent', 0) or 0
         conn.execute('INSERT INTO vehicle_routes (run_id, vehicle_name, vehicle_capacity, route_text, distance, load, fuel_spent) VALUES (?, ?, ?, ?, ?, ?, ?)',
                      (run_id, route['vehicle_name'], route['vehicle_capacity'], route['route_text'], route.get('distance_km', 0), route.get('load', 0), fuel_spent))
@@ -117,7 +113,6 @@ def get_run_details(run_id):
     conn = get_db_connection()
     requests = conn.execute('SELECT * FROM run_requests WHERE run_id = ?', (run_id,)).fetchall()
     routes = conn.execute('SELECT * FROM vehicle_routes WHERE run_id = ?', (run_id,)).fetchall()
-    # Повертаємо як списки стандартних словників
     return [dict(r) for r in requests], [dict(r) for r in routes]
 
 def update_run_status(run_id, new_status):
@@ -126,22 +121,21 @@ def update_run_status(run_id, new_status):
 
 def delete_run(run_id):
     """Повністю видаляє рейс та всі пов'язані з ним заявки та маршрути."""
-    # Завдяки 'ON DELETE CASCADE' пов'язані записи видаляться автоматично
     get_db_connection().execute('DELETE FROM runs WHERE id = ?', (run_id,)).connection.commit()
 
 def get_assigned_vehicles_for_date(run_date):
     """Повертає список назв автомобілів, зайнятих на певну дату."""
-    run_date_str = run_date.isoformat() # Використовуємо рядок для запиту
+    run_date_str = run_date.isoformat()
     runs_on_date = get_db_connection().execute("SELECT id FROM runs WHERE run_date = ? AND status IN ('Заплановано', 'В дорозі')", (run_date_str,)).fetchall()
     if not runs_on_date: return []
     run_ids = [r['id'] for r in runs_on_date]
-    placeholders = ','.join('?' for _ in run_ids) # Безпечна побудова плейсхолдерів
+    placeholders = ','.join('?' for _ in run_ids)
     assigned_vehicles = get_db_connection().execute(f'SELECT DISTINCT vehicle_name FROM vehicle_routes WHERE run_id IN ({placeholders})', run_ids).fetchall()
     return [v['vehicle_name'] for v in assigned_vehicles]
 
 def get_fuel_report(start_date, end_date):
     """Повертає зведений звіт по паливу за період для завершених рейсів."""
-    start_date_str = start_date.isoformat() # Використовуємо рядки для запиту
+    start_date_str = start_date.isoformat()
     end_date_str = end_date.isoformat()
     return get_db_connection().execute("""
         SELECT
