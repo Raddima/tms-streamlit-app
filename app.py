@@ -218,12 +218,12 @@ st.sidebar.header("⚙️ Глобальні налаштування")
 # Отримуємо API ключ із секретів Streamlit
 api_key = st.secrets.get("GOOGLE_MAPS_API_KEY")
 
-# (Можна додати перевірку та повідомлення, якщо ключ не знайдено)
 if not api_key:
     st.sidebar.error("API ключ Google Maps не налаштовано в секретах!")
     st.stop() # Зупиняємо виконання, якщо ключа немає
-else: 
-st.sidebar.text_input("🔑 Google Maps API ключ", type="password", value="********", disabled=True)
+else:
+    # Правильний відступ для рядка нижче:
+    st.sidebar.text_input("🔑 Google Maps API ключ", type="password", value="********", disabled=True, help="Ключ налаштовано в секретах Streamlit Cloud.")
 st.sidebar.markdown("---")
 st.sidebar.subheader("Параметри оптимізації")
 service_time_minutes = st.sidebar.number_input("Час на обслуговування (хв)", min_value=0, value=20)
@@ -465,4 +465,5 @@ with tab4:
             st.subheader("Візуалізація витрат палива:")
 
             st.bar_chart(report_df.set_index('vehicle_name')[['total_fuel']])
+
 
